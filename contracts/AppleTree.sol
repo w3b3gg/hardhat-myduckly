@@ -82,7 +82,7 @@ contract AppleTree is ERC721, ERC721Enumerable, ERC721Pausable, Ownable, ERC721B
     function hasGueioAvailable(uint256 amountGueio) public view returns (uint256) {
         for (uint256 i = 0; i < amountGueio; i++) {
             uint256 gueioId = gueio.tokenOfOwnerByIndex(msg.sender, i);
-
+            
             if (!gueioMinted[gueioId]) {
                 return gueioId;
             }

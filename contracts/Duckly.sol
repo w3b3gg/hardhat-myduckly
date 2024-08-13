@@ -7,6 +7,8 @@ import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
 import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Pausable.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
+import "hardhat/console.sol";
+
 contract Duckly is ERC721, ERC721Enumerable, ERC721Pausable, Ownable {
     ERC721Enumerable public gueio;
     ERC721Enumerable public appleTree;
@@ -27,6 +29,7 @@ contract Duckly is ERC721, ERC721Enumerable, ERC721Pausable, Ownable {
 
     mapping(uint256 => uint256) public gueioMinted;
     mapping(uint256 => uint256) public appleTreeMinted;
+    mapping(address => uint256) public openMinted;
     uint256 public mintedWithGueio = 0;
     uint256 public mintedWithAppleTree = 0;
     uint256 public mintedOpen = 0;
@@ -151,7 +154,7 @@ contract Duckly is ERC721, ERC721Enumerable, ERC721Pausable, Ownable {
         // uint256 amountAppleTreeMinted = 0;
         uint256 amountOpenMinted = 0;
         uint256 totalPrice = 0;
-
+        
         if (amountCanMintWithGueio > 0) {
             if (amountCanMintWithGueio == remainingAmount) {
                 totalPrice += remainingAmount * gueioHolderPrice;
@@ -185,12 +188,18 @@ contract Duckly is ERC721, ERC721Enumerable, ERC721Pausable, Ownable {
         // }
 
         if (remainingAmount > 0) {
+            require(isBatchOpen, 'Batch open is close');            
+            require(
+                openMinted[msg.sender] + remainingAmount <= maxPerWalletOpen, 
+                "Minted 10 Ducklys, you can't mint any more"
+            );
             totalPrice += remainingAmount * openPrice;
             amountOpenMinted = remainingAmount;
+            openMinted[msg.sender] = amountOpenMinted;
             remainingAmount = 0;
         }
 
-        require(msg.value == totalPrice, 'Not enough funds');
+        require(msg.value == totalPrice, 'Not enough founds');
 
         uint256 mintedWithGueioNow = 0;
         for (uint256 index = 0; index < amountGueioAvailable && mintedWithGueioNow < amountCanMintWithGueio; index++) {
