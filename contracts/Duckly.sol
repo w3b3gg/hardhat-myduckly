@@ -117,41 +117,48 @@ contract Duckly is ERC721, ERC721Enumerable, ERC721Pausable, Ownable {
         return (0, 0, new uint256[](0));
     }
 
-    function hasAppleTreeAvailable() public view returns (uint256, uint256[] memory) {
-        uint256 amountAppleTree = appleTree.balanceOf(msg.sender);
-        
-        uint256 counter = 0;
-        for (uint256 i = 0; i < amountAppleTree; i++) {
-            uint256 appleTreeId = appleTree.tokenOfOwnerByIndex(msg.sender, i);
+    function hasAppleTreeAvailable() public view returns (uint256, uint256, uint256[] memory) {
+        if (isBatchAppleTreeHolders) {
+            uint256 amountAppleTree = appleTree.balanceOf(msg.sender);
             
-            if (appleTreeMinted[appleTreeId] < maxPerWalletAppleTreeHolder) {
-                counter++;
+            uint256 counter = 0;
+            uint256 counterMint = 0;
+            for (uint256 i = 0; i < amountAppleTree; i++) {
+                uint256 appleTreeId = appleTree.tokenOfOwnerByIndex(msg.sender, i);
+                
+                if (appleTreeMinted[appleTreeId] < maxPerWalletAppleTreeHolder) {
+                    counter++;
+
+                    if (appleTreeMinted[appleTreeId] == 0) counterMint++;
+                }
             }
+
+            uint256[] memory appleTreeIdsAvailable = new uint256[](counter);
+            uint256 index = 0;
+            for (uint256 i = 0; i < amountAppleTree; i++) {
+                uint256 appleTreeId = appleTree.tokenOfOwnerByIndex(msg.sender, i);
+                
+                if (appleTreeMinted[appleTreeId] < maxPerWalletAppleTreeHolder) {
+                    appleTreeIdsAvailable[index] = appleTreeId;
+                    index++;
+                }
+            }
+
+            return (counter, counterMint, appleTreeIdsAvailable);
         }
 
-        uint256[] memory appleTreeIdsAvailable = new uint256[](counter);
-        uint256 index = 0;
-        for (uint256 i = 0; i < amountAppleTree; i++) {
-            uint256 appleTreeId = appleTree.tokenOfOwnerByIndex(msg.sender, i);
-            
-            if (appleTreeMinted[appleTreeId] < maxPerWalletAppleTreeHolder) {
-                appleTreeIdsAvailable[index] = appleTreeId;
-                index++;
-            }
-        }
-
-        return (counter, appleTreeIdsAvailable);
+        return (0, 0, new uint256[](0));
     }
 
     function mint(uint256 amount) public payable {
         require(amount > 0, 'You need to send the amount');
-        require(totalSupply() + amount < maxSupply, 'Sold out');
+        require(totalSupply() + amount <= maxSupply, 'Sold out');
         (uint256 amountGueioAvailable, uint256 amountCanMintWithGueio, uint256[] memory gueioIds) = hasGueioAvailable();
-        // (uint256 amountAppleTreeAvailable, uint256 amountCanMintWithAppleTree, uint256[] memory appleTreeIds) = hasAppleTreeAvailable();
+        (uint256 amountAppleTreeAvailable, uint256 amountCanMintWithAppleTree, uint256[] memory appleTreeIds) = hasAppleTreeAvailable();
 
         uint256 remainingAmount = amount;
         uint256 amountGueioMinted = 0;
-        // uint256 amountAppleTreeMinted = 0;
+        uint256 amountAppleTreeMinted = 0;
         uint256 amountOpenMinted = 0;
         uint256 totalPrice = 0;
         
@@ -171,21 +178,21 @@ contract Duckly is ERC721, ERC721Enumerable, ERC721Pausable, Ownable {
             }
         }
 
-        // if (amountAppleTreeAvailable > 0 && remainingAmount > 0) {
-        //     if (amountAppleTreeAvailable == remainingAmount) {
-        //         totalPrice += remainingAmount * appleTreeHolderPrice;
-        //         amountAppleTreeMinted = remainingAmount;
-        //         remainingAmount = 0;
-        //     } else if (amountAppleTreeAvailable > remainingAmount) {
-        //         totalPrice += remainingAmount * appleTreeHolderPrice;
-        //         amountAppleTreeMinted = remainingAmount;
-        //         remainingAmount = 0;
-        //     } else if (amountAppleTreeAvailable < remainingAmount) {
-        //         totalPrice += amountAppleTreeMinted * appleTreeHolderPrice;
-        //         amountAppleTreeMinted = amountAppleTreeAvailable;
-        //         remainingAmount -= amountAppleTreeMinted;
-        //     }
-        // }
+        if (amountCanMintWithAppleTree > 0) {
+            if (amountCanMintWithAppleTree == remainingAmount) {
+                totalPrice += remainingAmount * appleTreeHolderPrice;
+                amountAppleTreeMinted = remainingAmount;
+                remainingAmount = 0;
+            } else if (amountCanMintWithAppleTree > remainingAmount) {
+                totalPrice += remainingAmount * appleTreeHolderPrice;
+                amountAppleTreeMinted = remainingAmount;
+                remainingAmount = 0;
+            } else if (amountCanMintWithAppleTree < remainingAmount) {
+                totalPrice += amountCanMintWithAppleTree * appleTreeHolderPrice;
+                amountAppleTreeMinted = amountCanMintWithAppleTree;
+                remainingAmount -= amountAppleTreeMinted;
+            }
+        }
 
         if (remainingAmount > 0) {
             require(isBatchOpen, 'Batch open is close');            
@@ -224,15 +231,26 @@ contract Duckly is ERC721, ERC721Enumerable, ERC721Pausable, Ownable {
             }
         }
 
-        // for (uint256 index = 0; index < amountAppleTreeMinted; index++) {
-        //     appleTreeMinted[appleTreeIds[index]]++;
-        //     mintedWithAppleTree++;
-        // }
+        uint256 mintedWithAppleTreeNow = 0;
+        for (uint256 index = 0; index < amountAppleTreeAvailable && mintedWithAppleTreeNow < amountCanMintWithAppleTree; index++) {
+            
+            if (appleTreeMinted[appleTreeIds[index]] < maxPerWalletAppleTreeHolder) {
+                appleTreeMinted[appleTreeIds[index]]++;
+                mintedWithAppleTreeNow++;
+                mintedWithAppleTree++;
+            }
+        }
 
         mintedOpen += amountOpenMinted;
 
         for (uint256 index = 0; index < amount; index++) {
             safeMint(msg.sender, _nextTokenId++);
+        }
+    }
+
+    function mintTo(address to, uint256 amount) public onlyOwner {
+        for (uint256 index = 0; index < amount; index++) {
+            safeMint(to, _nextTokenId++);
         }
     }
 

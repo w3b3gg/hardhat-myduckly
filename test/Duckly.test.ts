@@ -53,7 +53,6 @@ describe('Duckly', () => {
     }
   }
 
-
   describe('Deploy', () => {
     it('Should be the right owner', async () => {
       const { duckly, owner } = await loadFixture(deployDuckly)
@@ -237,26 +236,6 @@ describe('Duckly', () => {
       }
     })
 
-    it('Should mint 5 Duckly so 2 Duckly by price Gueio holder and 3 open price', async () => {
-      const { duckly, gueio, client } = await loadFixture(deployDuckly)
-      const optionsGueio = { value: hre.ethers.parseEther('16.0') }
-      const optionsDuckly = { value: hre.ethers.parseEther('92.0') }
-
-      await gueio.openBatch0()
-      await gueio.addAddressOnWhitelist([await client.getAddress()])
-      await gueio.connect(client).batch0Mint(optionsGueio)
-
-      expect(await gueio.balanceOf(await client.getAddress())).to.equal(1)
-
-      await duckly.openBatchGueioHolders()
-      await duckly.openBatchOpen()
-      await duckly.connect(client).mint(5, optionsDuckly)
-
-      expect(await duckly.balanceOf(await client.getAddress())).to.equal(5)
-      expect(await duckly.mintedWithGueio()).to.equal(2)
-      expect(await duckly.mintedOpen()).to.equal(3)
-    })
-
     it('Should mint a 1024 Duckly by price Gueio holder', async () => {
       const { duckly, gueio, client, client1, client2, client3, client4, client5 } = await loadFixture(deployDuckly)
       const optionsGueio = { value: hre.ethers.parseEther('4000.00') }
@@ -301,6 +280,164 @@ describe('Duckly', () => {
       expect(await duckly.balanceOf(await client3.getAddress())).to.equal(200)
       expect(await duckly.balanceOf(await client4.getAddress())).to.equal(200)
       expect(await duckly.balanceOf(await client5.getAddress())).to.equal(24)
+    })
+  })
+
+  describe('Apple tree mint', () => {
+    it('Should not mint a Duckly when isBatchAppleTree is false and isBatchOpen is false too', async () => {
+      const { duckly, appleTree, client } = await loadFixture(deployDuckly)
+      const optionsAppleTree = { value: hre.ethers.parseEther('1.00') }
+
+      expect(await duckly.isBatchAppleTreeHolders()).to.false
+      expect(await duckly.isBatchOpen()).to.false
+
+      await appleTree.mint(await client.getAddress(), 1);
+      expect(await appleTree.balanceOf(await client.getAddress())).to.equal(1)
+
+      expect(await appleTree.balanceOf(await client.getAddress())).to.equal(1)
+
+      try {
+        await duckly.connect(client).mint(1, optionsAppleTree)
+
+        expect.fail('Minted a Duckly by price Apple Tree holder')
+      } catch (err) {
+        const error: Error = err as Error
+
+        expect(error.message).to.include('Batch open is close')
+      }
+    })
+
+    it('Should mint a Duckly by price AppleTree holder when isBatchAppleTree is tree', async () => {
+      const { duckly, appleTree, client } = await loadFixture(deployDuckly)
+      const options = { value: hre.ethers.parseEther('18.0') }
+
+      await duckly.openBatchAppleTreeHolders()
+      expect(await duckly.isBatchAppleTreeHolders()).to.true
+
+      await appleTree.mint(await client.getAddress(), 1)
+      expect(await appleTree.balanceOf(await client.getAddress())).to.equal(1)
+
+      await duckly.connect(client).mint(1, options)
+      expect(await duckly.balanceOf(await client.getAddress())).to.equal(1)
+      expect(await duckly.mintedWithAppleTree()).to.equal(1)
+    })
+
+    it('Should not mint 2 Duckly by price Apple Tree holder with only 1 Apple Tree on clinet wallet', async () => {
+      const { duckly, appleTree, client } = await loadFixture(deployDuckly)
+      const options = { value: hre.ethers.parseEther('36.0') }
+
+      await duckly.openBatchAppleTreeHolders()
+      expect(await duckly.isBatchAppleTreeHolders()).to.true
+
+      await appleTree.mint(await client.getAddress(), 1)
+      expect(await appleTree.balanceOf(await client.getAddress())).to.equal(1)
+
+      try {
+        await duckly.connect(client).mint(2, options)
+
+        expect.fail('Minted 2 Duckly with 1 Apple Tree')
+      } catch (err) {
+        const error: Error = err as Error
+
+        expect(error.message).to.include('Batch open is close')
+      }
+    })
+
+    it('Should mint 5 Duckly by price Apple Tree holder with 5 Apple Tree on clinet walllet', async () => {
+      const { duckly, appleTree, client } = await loadFixture(deployDuckly)
+      const options = { value: hre.ethers.parseEther('90.0') }
+
+      await duckly.openBatchAppleTreeHolders()
+      expect(await duckly.isBatchAppleTreeHolders()).to.true
+
+      await appleTree.mint(await client.getAddress(), 5)
+      expect(await appleTree.balanceOf(await client.getAddress())).to.equal(5)
+
+      await duckly.connect(client).mint(5, options)
+      expect(await duckly.balanceOf(await client.getAddress())).to.equal(5)
+      expect(await duckly.mintedWithAppleTree()).to.equal(5)
+    })
+
+    it('Should mint 2048 Duckly by price Apple Tree', async () => {
+      const { duckly, appleTree } = await loadFixture(deployDuckly)
+      const options = { value: hre.ethers.parseEther('2304.00') }
+      const clients = await hre.ethers.getSigners()
+
+      await duckly.openBatchAppleTreeHolders()
+      expect(await duckly.isBatchAppleTreeHolders()).to.true
+
+      for (let index = 1; index <= 16; index++) {
+        await appleTree.mint(await clients[index].getAddress(), 128)
+        expect(await appleTree.balanceOf(await clients[index].getAddress())).to.equal(128)
+
+        await duckly.connect(clients[index]).mint(128, options)
+        expect(await duckly.balanceOf(await clients[index].getAddress())).to.equal(128)
+      }
+
+      expect(await duckly.totalSupply()).to.equal(2048)
+    })
+
+    it('Should not mint 2049 Duckly by price Apple Tree', async () => {
+      const { duckly, appleTree } = await loadFixture(deployDuckly)
+      const options = { value: hre.ethers.parseEther('2304.00') }
+      const clients = await hre.ethers.getSigners()
+
+      await duckly.openBatchAppleTreeHolders()
+      expect(await duckly.isBatchAppleTreeHolders()).to.true
+
+      for (let index = 1; index <= 16; index++) {
+        await appleTree.mint(await clients[index].getAddress(), 128)
+        expect(await appleTree.balanceOf(await clients[index].getAddress())).to.equal(128)
+
+        await duckly.connect(clients[index]).mint(128, options)
+        expect(await duckly.balanceOf(await clients[index].getAddress())).to.equal(128)
+      }
+      await appleTree.mint(await clients[1].getAddress(), 1)
+      expect(await appleTree.balanceOf(await clients[1])).to.equal(129)
+
+      try {
+        await duckly.connect(clients[1]).mint(1, { value: hre.ethers.parseEther('18.00') })
+
+        expect.fail('Minted 2049 Duckly by price Apple Tree')
+      } catch (err) {
+        const error: Error = err as Error
+
+        expect(error.message).to.include('Sold out')
+      }
+    })
+
+    it('Should not mint 3000 Duckly by price Apple Tree', async () => {
+      const { duckly, appleTree } = await loadFixture(deployDuckly)
+      const options = { value: hre.ethers.parseEther('3600.00') }
+      const clients = await hre.ethers.getSigners()
+
+      await duckly.openBatchAppleTreeHolders()
+      expect(await duckly.isBatchAppleTreeHolders()).to.true
+
+      for (let index = 1; index <= 15; index++) {
+        if (index === 11) {
+          try {
+            await appleTree.mint(await clients[index].getAddress(), 200)
+            expect(await appleTree.balanceOf(await clients[index].getAddress())).to.equal(200)
+
+            await duckly.connect(clients[index]).mint(200, options)
+
+            expect.fail('Minted more than maxSupply')
+          } catch (err) {
+            const error: Error = err as Error
+
+            expect(error.message).to.include('Sold out')
+          }
+
+          return false;
+        }
+
+        await appleTree.mint(await clients[index].getAddress(), 200)
+        expect(await appleTree.balanceOf(await clients[index].getAddress())).to.equal(200)
+
+        await duckly.connect(clients[index]).mint(200, options)
+        expect(await duckly.balanceOf(await clients[index].getAddress())).to.equal(200)
+      }
     })
   })
 
@@ -409,6 +546,132 @@ describe('Duckly', () => {
 
         expect(error.message).to.include('Not enough founds')
       }
+    })
+
+    it('Should mint 2048 Duckly by price open', async () => {
+      const { duckly } = await loadFixture(deployDuckly)
+      const clients = await hre.ethers.getSigners()
+      const options = { value: hre.ethers.parseEther('200.0') }
+      const options8 = { value: hre.ethers.parseEther('160.0') }
+
+      await duckly.openBatchOpen()
+      expect(await duckly.isBatchOpen()).to.true
+
+      for (let index = 1; index <= 10; index++) {
+        await duckly.mintTo(await clients[index], 200)
+        expect(await duckly.balanceOf(await clients[index].getAddress())).to.equal(200)
+      }
+
+      expect(await duckly.totalSupply()).to.equal(2000)
+
+      for (let index = 11; index <= 15; index++) {
+        if (index === 15) {
+          await duckly.connect(clients[index]).mint(8, options8)
+          expect(await duckly.balanceOf(await clients[index].getAddress())).to.equal(8)
+          return;
+        }
+
+        await duckly.connect(clients[index]).mint(10, options)
+        expect(await duckly.balanceOf(await clients[index].getAddress())).to.equal(10)
+      }
+
+      expect(await duckly.totalSupply()).to.equal(2048)
+      expect(await duckly.mintedOpen()).to.equal(2048)
+    })
+  })
+
+  describe('Mint mixed - Gueio, Apple Tree and Open', () => {
+    it('Should mint 4 Duckly with Gueio and 10 with Apple Tree', async () => {
+      const { duckly, gueio, appleTree, client } = await loadFixture(deployDuckly)
+      const optionsGueio = { value: hre.ethers.parseEther('80.0') }
+      const optionsDuckly = { value: hre.ethers.parseEther('244.0') }
+
+      await gueio.openBatch4()
+      await gueio.addAddressOnWhitelist([await client.getAddress()])
+      await gueio.connect(client).batch4Mint(2, optionsGueio)
+      expect(await gueio.balanceOf(await client.getAddress())).to.equal(2)
+
+      await appleTree.mint(await client.getAddress(), 10)
+      expect(await appleTree.balanceOf(await client.getAddress())).to.equal(10)
+
+      await duckly.openBatchGueioHolders()
+      expect(await duckly.isBatchGueioHolders()).to.true
+
+      await duckly.openBatchAppleTreeHolders()
+      expect(await duckly.isBatchAppleTreeHolders()).to.true
+
+      await duckly.connect(client).mint(14, optionsDuckly)
+      expect(await duckly.balanceOf(await client.getAddress())).to.equal(14)
+      expect(await duckly.mintedWithGueio()).to.equal(4)
+      expect(await duckly.mintedWithAppleTree()).to.equal(10)
+    })
+
+    it('Should mint 5 Duckly so 2 Duckly by price Gueio holder and 3 open price', async () => {
+      const { duckly, gueio, client } = await loadFixture(deployDuckly)
+      const optionsGueio = { value: hre.ethers.parseEther('16.0') }
+      const optionsDuckly = { value: hre.ethers.parseEther('92.0') }
+
+      await gueio.openBatch0()
+      await gueio.addAddressOnWhitelist([await client.getAddress()])
+      await gueio.connect(client).batch0Mint(optionsGueio)
+
+      expect(await gueio.balanceOf(await client.getAddress())).to.equal(1)
+
+      await duckly.openBatchGueioHolders()
+      await duckly.openBatchOpen()
+      await duckly.connect(client).mint(5, optionsDuckly)
+
+      expect(await duckly.balanceOf(await client.getAddress())).to.equal(5)
+      expect(await duckly.mintedWithGueio()).to.equal(2)
+      expect(await duckly.mintedOpen()).to.equal(3)
+    })
+
+    it('Should mint 10 Duckly so 5 Duckly by price Apple Tree holder and 5 open price', async () => {
+      const { duckly, appleTree, client } = await loadFixture(deployDuckly)
+      const options = { value: hre.ethers.parseEther('190.0') }
+
+      await appleTree.mint(await client.getAddress(), 5)
+      expect(await appleTree.balanceOf(await client.getAddress())).to.equal(5)
+
+      await duckly.openBatchAppleTreeHolders()
+      await duckly.openBatchOpen()
+      expect(await duckly.isBatchAppleTreeHolders()).to.true
+      expect(await duckly.isBatchOpen()).to.true
+
+      await duckly.connect(client).mint(10, options)
+      expect(await duckly.balanceOf(await client.getAddress())).to.equal(10)
+      expect(await duckly.mintedWithAppleTree()).to.equal(5)
+      expect(await duckly.mintedOpen()).to.equal(5)
+    })
+
+    it('Should mint 20 Duckly so 10 Duckly by price Gueio holder, 5 Apple Tree and 5 open', async () => {
+      const { duckly, gueio, appleTree, client } = await loadFixture(deployDuckly)
+      const optionsGueio = { value: hre.ethers.parseEther('200.0') }
+      const options = { value: hre.ethers.parseEther('350.0') }
+
+      await gueio.openBatch4()
+      expect(await gueio.isBatch4()).to.true
+      await gueio.addAddressOnWhitelist([await client.getAddress()])
+      await gueio.connect(client).batch4Mint(5, optionsGueio)
+      expect(await gueio.balanceOf(await client.getAddress())).to.equal(5)
+
+      await appleTree.mint(await client.getAddress(), 5)
+      expect(await appleTree.balanceOf(await client.getAddress())).to.equal(5)
+
+      await duckly.openBatchGueioHolders()
+      expect(await duckly.isBatchGueioHolders()).to.true
+
+      await duckly.openBatchAppleTreeHolders()
+      expect(await duckly.isBatchAppleTreeHolders()).to.true
+
+      await duckly.openBatchOpen()
+      expect(await duckly.isBatchOpen()).to.true
+
+      await duckly.connect(client).mint(20, options)
+      expect(await duckly.balanceOf(await client.getAddress())).to.equal(20)
+      expect(await duckly.mintedWithGueio()).to.equal(10)
+      expect(await duckly.mintedWithAppleTree()).to.equal(5)
+      expect(await duckly.mintedOpen()).to.equal(5)
     })
   })
 })
