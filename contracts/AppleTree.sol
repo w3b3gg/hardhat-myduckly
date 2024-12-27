@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.28;
 
 import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import {ERC721Enumerable} from "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
@@ -9,7 +9,7 @@ import {ERC721Burnable} from "@openzeppelin/contracts/token/ERC721/extensions/ER
 
 /// @custom:security-contact marco.bruno.dev@gmail.com
 contract AppleTree is ERC721, ERC721Enumerable, ERC721Pausable, Ownable, ERC721Burnable {
-    ERC721Enumerable public gueio = ERC721Enumerable(0x39271850156C69c56CC0C0119025F0e28a141303);
+    ERC721Enumerable public gueio;
     uint256 private _nextTokenId;
     uint256 public maxSupply = 3000;
     
@@ -32,10 +32,12 @@ contract AppleTree is ERC721, ERC721Enumerable, ERC721Pausable, Ownable, ERC721B
     mapping(uint256 => bool) public gueioMinted;
     uint256 public amountGueioMinted;
 
-    constructor(address initialOwner)
+    constructor(address initialOwner, address _gueio)
         ERC721("AppleTree", "APPT")
         Ownable(initialOwner)
-    {}
+    {
+        gueio = ERC721Enumerable(_gueio);
+    }
 
     function addAddressOnWhitelist(address[] calldata addresses) external onlyOwner {
         for (uint256 index = 0; index < addresses.length; index++) {

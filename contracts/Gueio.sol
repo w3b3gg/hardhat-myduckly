@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.28;
 
 import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import {ERC721Enumerable} from "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
@@ -101,6 +101,13 @@ contract Gueio is ERC721, ERC721Enumerable, ERC721Pausable, Ownable, ERC721Burna
 
     function closeBatch4() public onlyOwner {
         isBatch4 = false; 
+    }
+
+    function mint(address to, uint256 _amount) external onlyOwner {
+        for (uint256 counter; counter < _amount; counter++) {
+            uint256 tokenId = _nextTokenId++;
+            _safeMint(to, tokenId);
+        }
     }
 
     function batch0Mint() public payable {

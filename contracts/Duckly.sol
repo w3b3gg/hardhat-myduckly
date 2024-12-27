@@ -1,261 +1,354 @@
 // SPDX-License-Identifier: MIT
-// Compatible with OpenZeppelin Contracts ^5.0.0
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.28;
 
-import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
-import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
-import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Pausable.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
+import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+import {ERC721Enumerable} from "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
+import {ERC721URIStorage} from "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
+import {ERC721Pausable} from "@openzeppelin/contracts/token/ERC721/extensions/ERC721Pausable.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {ERC721Burnable} from "@openzeppelin/contracts/token/ERC721/extensions/ERC721Burnable.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
-import "hardhat/console.sol";
+/**
+ * @title Duckly NFT Contract
+ * @notice This contract implements the Duckly NFT collection with various minting options
+ * @dev Implements ERC721 with enumerable and URI storage extensions
+ * @author Marco Bruno <marco.bruno.dev@gmail.com>
+ */
+contract Duckly is
+    ERC721,
+    ERC721Enumerable,
+    ERC721URIStorage,
+    ERC721Pausable,
+    Ownable,
+    ERC721Burnable,
+    ReentrancyGuard
+{
+    // Custom errors
+    error ExceedsMaxSupply(uint256 requested, uint256 remaining);
+    error InsufficientPayment(uint256 provided, uint256 required);
+    error MinimumQuantityNotMet(uint256 provided, uint256 required);
+    error InvalidQuantity(uint256 quantity);
+    error WithdrawFailed();
+    error ZeroAddress();
+    error ContractPaused();
+    error InvalidBaseURI();
+    error WithdrawDelayNotMet();
+    error NotAuthorized();
 
-contract Duckly is ERC721, ERC721Enumerable, ERC721Pausable, Ownable {
-    ERC721Enumerable public gueio;
-    ERC721Enumerable public appleTree;
-    uint256 private _nextTokenId = 0;
-    uint256 public maxSupply = 2048;
+    // State variables
+    uint96 private _nextTokenId;
+    string private _baseURIStorage;
+    uint256 public constant MAX_SUPPLY_GENESIS = 4000;
+    uint256 public constant PUBLIC_MINT_PRICE = 100 * 10 ** 18;
+    uint256 private constant WITHDRAW_DELAY = 24 hours;
+    uint256 private lastWithdrawTime;
+    
+    // Minters mapping
+    mapping(address => bool) public minters;
 
-    bool public isBatchGueioHolders = false;
-    uint256 public gueioHolderPrice = 16 ether;
-    uint256 public maxPerWalletGueioHolder = 2;
+    IERC20 public immutable MYDLY;
 
-    bool public isBatchAppleTreeHolders = false;
-    uint256 public appleTreeHolderPrice = 18 ether;
-    uint256 public maxPerWalletAppleTreeHolder = 1;
+    // Events
+    event BatchMint(
+        address indexed to,
+        uint256 startTokenId,
+        uint256 quantity,
+        uint256 price
+    );
+    event PaymentProcessed(
+        address indexed from,
+        uint256 amount,
+        uint256 discount
+    );
+    event WithdrawProcessed(address indexed to, uint256 amount);
+    event BaseURIUpdated(string newBaseURI);
+    event BatchBurned(address indexed from, uint256[] tokenIds);
+    event MinterAdded(address indexed minter);
+    event MinterRemoved(address indexed minter);
 
-    bool public isBatchOpen = false;
-    uint256 public openPrice = 20 ether;
-    uint256 public maxPerWalletOpen = 10;
+    // Modifiers
+    modifier onlyMinterOrOwner() {
+        if (!minters[msg.sender] && msg.sender != owner()) revert NotAuthorized();
+        _;
+    }
 
-    mapping(uint256 => uint256) public gueioMinted;
-    mapping(uint256 => uint256) public appleTreeMinted;
-    mapping(address => uint256) public openMinted;
-    uint256 public mintedWithGueio = 0;
-    uint256 public mintedWithAppleTree = 0;
-    uint256 public mintedOpen = 0;
-
+    /**
+     * @notice Contract constructor
+     * @param initialOwner Address of the initial contract owner
+     * @param mydly Address of the MYDLY token contract
+     */
     constructor(
         address initialOwner,
-        ERC721Enumerable gueioAddress,
-        ERC721Enumerable appleTreeAddress
+        address mydly
     ) ERC721("Duckly", "DKY") Ownable(initialOwner) {
-        gueio = ERC721Enumerable(gueioAddress);
-        appleTree = ERC721Enumerable(appleTreeAddress);
+        if (mydly == address(0)) revert ZeroAddress();
+        MYDLY = IERC20(mydly);
+        _baseURIStorage = "https://myduckly.com/api/nft/duckly/";
+        lastWithdrawTime = block.timestamp;
     }
 
-    function _baseURI() internal pure override returns (string memory) {
-        return "https://localhost:7071/api/nfts/duckly";
+    /**
+     * @notice Adds a new minter address
+     * @param minter Address to be added as minter
+     */
+    function addMinter(address minter) external onlyOwner {
+        if (minter == address(0)) revert ZeroAddress();
+        minters[minter] = true;
+        emit MinterAdded(minter);
     }
 
+    /**
+     * @notice Removes a minter address
+     * @param minter Address to be removed from minters
+     */
+    function removeMinter(address minter) external onlyOwner {
+        minters[minter] = false;
+        emit MinterRemoved(minter);
+    }
+
+    /**
+     * @notice Returns the base URI for token metadata
+     * @return Base URI string
+     */
+    function _baseURI() internal view override returns (string memory) {
+        return _baseURIStorage;
+    }
+
+    /**
+     * @notice Updates the base URI for token metadata
+     * @param newBaseURI New base URI string
+     */
+    function setBaseURI(string calldata newBaseURI) external onlyOwner {
+        if (bytes(newBaseURI).length == 0) revert InvalidBaseURI();
+        _baseURIStorage = newBaseURI;
+        emit BaseURIUpdated(newBaseURI);
+    }
+
+    /**
+     * @notice Validates and reserves token IDs for minting
+     * @param quantity Number of tokens to reserve
+     * @return firstTokenId The first token ID in the reserved range
+     */
+    function _validateAndReserveTokens(
+        uint256 quantity
+    ) private returns (uint256 firstTokenId) {
+        if (quantity == 0) revert InvalidQuantity(quantity);
+        if (paused()) revert ContractPaused();
+
+        uint256 currentSupply = _nextTokenId;
+        uint256 newSupply = currentSupply + quantity;
+
+        if (newSupply > MAX_SUPPLY_GENESIS) {
+            revert ExceedsMaxSupply({
+                requested: quantity,
+                remaining: MAX_SUPPLY_GENESIS - currentSupply
+            });
+        }
+
+        firstTokenId = currentSupply;
+        _nextTokenId = uint96(newSupply);
+        return firstTokenId;
+    }
+
+    /**
+     * @notice Processes payment for minting
+     * @param quantity Number of tokens being minted
+     * @param discountPercent Discount percentage to apply
+     */
+    function _processPayment(
+        uint256 quantity,
+        uint256 discountPercent
+    ) private {
+        uint256 totalPrice = (PUBLIC_MINT_PRICE *
+            quantity *
+            (100 - discountPercent)) / 100;
+
+        if (MYDLY.allowance(msg.sender, address(this)) < totalPrice) {
+            revert InsufficientPayment({
+                provided: MYDLY.allowance(msg.sender, address(this)),
+                required: totalPrice
+            });
+        }
+
+        bool success = MYDLY.transferFrom(
+            msg.sender,
+            address(this),
+            totalPrice
+        );
+        if (!success) revert InsufficientPayment(0, totalPrice);
+
+        emit PaymentProcessed(msg.sender, totalPrice, discountPercent);
+    }
+
+    /**
+     * @notice Pauses all token transfers and minting
+     */
     function pause() public onlyOwner {
         _pause();
     }
 
+    /**
+     * @notice Unpauses all token transfers and minting
+     */
     function unpause() public onlyOwner {
         _unpause();
     }
 
-    function safeMint(address to, uint256 tokenId) internal {
-        _safeMint(to, tokenId);
+    /**
+     * @notice Mints a single token
+     * @param to Address to mint the token to
+     */
+    function safeMint(address to) public nonReentrant {
+        if (to == address(0)) revert ZeroAddress();
+
+        uint256 firstTokenId = _validateAndReserveTokens(1);
+        _processPayment(1, 0); // 0% discount
+        _safeMint(to, firstTokenId);
+
+        emit BatchMint(to, firstTokenId, 1, PUBLIC_MINT_PRICE);
     }
 
-    function openBatchGueioHolders() public onlyOwner {
-        isBatchGueioHolders = true;
-    }
-    
-    function openBatchAppleTreeHolders() public onlyOwner {
-        isBatchAppleTreeHolders = true;
-    }
+    /**
+     * @notice Mints three tokens with a 10% discount
+     * @param to Address to mint the tokens to
+     */
+    function mintThree(address to) public nonReentrant {
+        if (to == address(0)) revert ZeroAddress();
 
-    function openBatchOpen() public onlyOwner {
-        isBatchOpen = true;
-    }
+        uint256 firstTokenId = _validateAndReserveTokens(3);
+        _processPayment(3, 10); // 10% discount
 
-    function closeBatchGueioHolders() public onlyOwner {
-        isBatchGueioHolders = false;
-    }
-
-    function closeBatchAppleTreeHolders() public onlyOwner {
-        isBatchAppleTreeHolders = false;
-    }
-
-    function closeBatchOpen() public onlyOwner {
-        isBatchOpen = false;
-    }
-
-    function hasGueioAvailable() public view returns (uint256, uint256, uint256[] memory) {
-        if (isBatchGueioHolders) {
-            uint256 amountGueio = gueio.balanceOf(msg.sender);
-            
-            uint256 counter = 0;
-            uint256 counterMint = 0;
-            for (uint256 i = 0; i < amountGueio; i++) {
-                uint256 gueioId = gueio.tokenOfOwnerByIndex(msg.sender, i);
-                
-                if (gueioMinted[gueioId] < maxPerWalletGueioHolder) {
-                    counter++;
-
-                    if (gueioMinted[gueioId] == 0) counterMint += 2;
-                    if (gueioMinted[gueioId] == 1) counterMint++;
-                }
-            }
-
-            uint256[] memory gueioIdsAvailable = new uint256[](counter);
-            uint256 index = 0;
-            for (uint256 i = 0; i < amountGueio; i++) {
-                uint256 gueioId = gueio.tokenOfOwnerByIndex(msg.sender, i);
-
-                if (gueioMinted[gueioId] < maxPerWalletGueioHolder) {
-                    gueioIdsAvailable[index] = gueioId;
-                    index++;
-                }
-            }
-
-            return (counter, counterMint, gueioIdsAvailable);
-        }
-
-        return (0, 0, new uint256[](0));
-    }
-
-    function hasAppleTreeAvailable() public view returns (uint256, uint256, uint256[] memory) {
-        if (isBatchAppleTreeHolders) {
-            uint256 amountAppleTree = appleTree.balanceOf(msg.sender);
-            
-            uint256 counter = 0;
-            uint256 counterMint = 0;
-            for (uint256 i = 0; i < amountAppleTree; i++) {
-                uint256 appleTreeId = appleTree.tokenOfOwnerByIndex(msg.sender, i);
-                
-                if (appleTreeMinted[appleTreeId] < maxPerWalletAppleTreeHolder) {
-                    counter++;
-
-                    if (appleTreeMinted[appleTreeId] == 0) counterMint++;
-                }
-            }
-
-            uint256[] memory appleTreeIdsAvailable = new uint256[](counter);
-            uint256 index = 0;
-            for (uint256 i = 0; i < amountAppleTree; i++) {
-                uint256 appleTreeId = appleTree.tokenOfOwnerByIndex(msg.sender, i);
-                
-                if (appleTreeMinted[appleTreeId] < maxPerWalletAppleTreeHolder) {
-                    appleTreeIdsAvailable[index] = appleTreeId;
-                    index++;
-                }
-            }
-
-            return (counter, counterMint, appleTreeIdsAvailable);
-        }
-
-        return (0, 0, new uint256[](0));
-    }
-
-    function mint(uint256 amount) public payable {
-        require(amount > 0, 'You need to send the amount');
-        require(totalSupply() + amount <= maxSupply, 'Sold out');
-        (uint256 amountGueioAvailable, uint256 amountCanMintWithGueio, uint256[] memory gueioIds) = hasGueioAvailable();
-        (uint256 amountAppleTreeAvailable, uint256 amountCanMintWithAppleTree, uint256[] memory appleTreeIds) = hasAppleTreeAvailable();
-
-        uint256 remainingAmount = amount;
-        uint256 amountGueioMinted = 0;
-        uint256 amountAppleTreeMinted = 0;
-        uint256 amountOpenMinted = 0;
-        uint256 totalPrice = 0;
-        
-        if (amountCanMintWithGueio > 0) {
-            if (amountCanMintWithGueio == remainingAmount) {
-                totalPrice += remainingAmount * gueioHolderPrice;
-                amountGueioMinted = remainingAmount;
-                remainingAmount = 0;
-            } else if (amountCanMintWithGueio > remainingAmount) {
-                totalPrice += remainingAmount * gueioHolderPrice;
-                amountGueioMinted = remainingAmount;
-                remainingAmount = 0;
-            } else if (amountCanMintWithGueio < remainingAmount) {
-                totalPrice += amountCanMintWithGueio * gueioHolderPrice;
-                amountGueioMinted = amountCanMintWithGueio;
-                remainingAmount -= amountGueioMinted;
+        unchecked {
+            for (uint256 i; i < 3; ++i) {
+                _safeMint(to, firstTokenId + i);
             }
         }
 
-        if (amountCanMintWithAppleTree > 0) {
-            if (amountCanMintWithAppleTree == remainingAmount) {
-                totalPrice += remainingAmount * appleTreeHolderPrice;
-                amountAppleTreeMinted = remainingAmount;
-                remainingAmount = 0;
-            } else if (amountCanMintWithAppleTree > remainingAmount) {
-                totalPrice += remainingAmount * appleTreeHolderPrice;
-                amountAppleTreeMinted = remainingAmount;
-                remainingAmount = 0;
-            } else if (amountCanMintWithAppleTree < remainingAmount) {
-                totalPrice += amountCanMintWithAppleTree * appleTreeHolderPrice;
-                amountAppleTreeMinted = amountCanMintWithAppleTree;
-                remainingAmount -= amountAppleTreeMinted;
-            }
-        }
-
-        if (remainingAmount > 0) {
-            require(isBatchOpen, 'Batch open is close');            
-            require(
-                openMinted[msg.sender] + remainingAmount <= maxPerWalletOpen, 
-                "Minted 10 Ducklys, you can't mint any more"
-            );
-            totalPrice += remainingAmount * openPrice;
-            amountOpenMinted = remainingAmount;
-            openMinted[msg.sender] = amountOpenMinted;
-            remainingAmount = 0;
-        }
-
-        require(msg.value == totalPrice, 'Not enough founds');
-
-        uint256 mintedWithGueioNow = 0;
-        for (uint256 index = 0; index < amountGueioAvailable && mintedWithGueioNow < amountCanMintWithGueio; index++) {
-            if (gueioMinted[gueioIds[index]] < maxPerWalletGueioHolder) {
-                if (mintedWithGueioNow < amount) {
-                    if (gueioMinted[gueioIds[index]] == 1) {
-                        gueioMinted[gueioIds[index]]++;
-                        mintedWithGueioNow++;
-                        mintedWithGueio++;
-                    } else if (gueioMinted[gueioIds[index]] == 0) {
-                        if ((amount - mintedWithGueioNow) == 1) {
-                            gueioMinted[gueioIds[index]]++;
-                            mintedWithGueioNow++;
-                            mintedWithGueio++;
-                        } else {
-                            gueioMinted[gueioIds[index]] += 2;
-                            mintedWithGueioNow += 2;
-                            mintedWithGueio += 2;
-                        }
-                    }
-                }
-            }
-        }
-
-        uint256 mintedWithAppleTreeNow = 0;
-        for (uint256 index = 0; index < amountAppleTreeAvailable && mintedWithAppleTreeNow < amountCanMintWithAppleTree; index++) {
-            
-            if (appleTreeMinted[appleTreeIds[index]] < maxPerWalletAppleTreeHolder) {
-                appleTreeMinted[appleTreeIds[index]]++;
-                mintedWithAppleTreeNow++;
-                mintedWithAppleTree++;
-            }
-        }
-
-        mintedOpen += amountOpenMinted;
-
-        for (uint256 index = 0; index < amount; index++) {
-            safeMint(msg.sender, _nextTokenId++);
-        }
+        emit BatchMint(to, firstTokenId, 3, (PUBLIC_MINT_PRICE * 3 * 90) / 100);
     }
 
-    function mintTo(address to, uint256 amount) public onlyOwner {
-        for (uint256 index = 0; index < amount; index++) {
-            safeMint(to, _nextTokenId++);
+    /**
+     * @notice Mints five tokens with a 15% discount
+     * @param to Address to mint the tokens to
+     */
+    function mintFive(address to) public nonReentrant {
+        if (to == address(0)) revert ZeroAddress();
+
+        uint256 firstTokenId = _validateAndReserveTokens(5);
+        _processPayment(5, 15); // 15% discount
+
+        unchecked {
+            for (uint256 i; i < 5; ++i) {
+                _safeMint(to, firstTokenId + i);
+            }
         }
+
+        emit BatchMint(to, firstTokenId, 5, (PUBLIC_MINT_PRICE * 5 * 85) / 100);
     }
 
-    // The following functions are overrides required by Solidity.
+    /**
+     * @notice Mints multiple tokens in bulk with a 15% discount
+     * @param to Address to mint the tokens to
+     * @param quantity Number of tokens to mint (minimum 5)
+     */
+    function mintBulk(address to, uint256 quantity) public nonReentrant {
+        if (to == address(0)) revert ZeroAddress();
+        if (quantity < 5) {
+            revert MinimumQuantityNotMet({provided: quantity, required: 5});
+        }
 
+        uint256 firstTokenId = _validateAndReserveTokens(quantity);
+        _processPayment(quantity, 15); // 15% discount
+
+        unchecked {
+            for (uint256 i; i < quantity; ++i) {
+                _safeMint(to, firstTokenId + i);
+            }
+        }
+
+        emit BatchMint(
+            to,
+            firstTokenId,
+            quantity,
+            (PUBLIC_MINT_PRICE * quantity * 85) / 100
+        );
+    }
+
+    /**
+     * @notice Allows owner or authorized minters to mint tokens without payment
+     * @param to Address to mint the tokens to
+     * @param quantity Number of tokens to mint
+     */
+    function offchainMint(
+        address to,
+        uint256 quantity
+    ) public onlyMinterOrOwner {
+        if (to == address(0)) revert ZeroAddress();
+        if (quantity == 0) revert InvalidQuantity(quantity);
+
+        uint256 firstTokenId = _validateAndReserveTokens(quantity);
+
+        unchecked {
+            for (uint256 i; i < quantity; ++i) {
+                _safeMint(to, firstTokenId + i);
+            }
+        }
+
+        emit BatchMint(to, firstTokenId, quantity, 0);
+    }
+
+    /**
+     * @notice Withdraws accumulated MYDLY tokens to the owner
+     * @dev Implements a 24-hour delay between withdrawals
+     */
+    function withdraw() public onlyOwner nonReentrant {
+        if (block.timestamp < lastWithdrawTime + WITHDRAW_DELAY)
+            revert WithdrawDelayNotMet();
+
+        uint256 balance = MYDLY.balanceOf(address(this));
+        if (balance == 0) revert WithdrawFailed();
+
+        lastWithdrawTime = block.timestamp;
+
+        bool success = MYDLY.transfer(msg.sender, balance);
+        if (!success) revert WithdrawFailed();
+
+        emit WithdrawProcessed(msg.sender, balance);
+    }
+
+    /**
+     * @notice Burns multiple tokens at once
+     * @param tokenIds Array of token IDs to burn
+     */
+    function batchBurn(uint256[] calldata tokenIds) public {
+        uint256 length = tokenIds.length;
+        for (uint256 i; i < length; ) {
+            burn(tokenIds[i]);
+            unchecked {
+                ++i;
+            }
+        }
+        emit BatchBurned(msg.sender, tokenIds);
+    }
+
+    /**
+     * @notice Returns the next token ID to be minted
+     */
+    function getNextTokenId() public view returns (uint256) {
+        return _nextTokenId;
+    }
+
+    /**
+     * @notice Returns the number of tokens that can still be minted
+     */
+    function remainingTokens() public view returns (uint256) {
+        return MAX_SUPPLY_GENESIS - _nextTokenId;
+    }
+
+    // Required overrides
     function _update(
         address to,
         uint256 tokenId,
@@ -275,9 +368,20 @@ contract Duckly is ERC721, ERC721Enumerable, ERC721Pausable, Ownable {
         super._increaseBalance(account, value);
     }
 
+    function tokenURI(
+        uint256 tokenId
+    ) public view override(ERC721, ERC721URIStorage) returns (string memory) {
+        return super.tokenURI(tokenId);
+    }
+
     function supportsInterface(
         bytes4 interfaceId
-    ) public view override(ERC721, ERC721Enumerable) returns (bool) {
+    )
+        public
+        view
+        override(ERC721, ERC721Enumerable, ERC721URIStorage)
+        returns (bool)
+    {
         return super.supportsInterface(interfaceId);
     }
 }
